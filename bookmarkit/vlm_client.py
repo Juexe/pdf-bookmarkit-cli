@@ -17,7 +17,8 @@ class VlmClient:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        max_retries: int = 3
+        max_retries: int = 3,
+        log_dir: Optional[str] = None
     ):
         self.model = model or os.getenv("VLM_MODEL")
         self.api_key = api_key or os.getenv("VLM_API_KEY")
@@ -28,6 +29,7 @@ class VlmClient:
             raise ValueError("VLM_BASE_URL, VLM_MODEL, VLM_API_KEY 必须提供或在环境变量中设置")
         
         self.max_retries = max_retries
+        self.log_dir = log_dir
         logger.info(f"VlmClient 初始化成功，模型：{self.model}")
 
     def build_system_prompt(self) -> str:
@@ -38,7 +40,7 @@ class VlmClient:
 1. 提取目录中所有可见条目。
 2. 保留层级结构，使用 level 属性（0 表示顶级，1 表示下一级，以此类推）。
 3. 准确提取它们在目录中标示的页码（数字）。
-4. 保留标题原有格式（如： "1.1 背景"）。
+4. 保留标题原有内容（如： "1.1 背景"），去除公式和特殊符号。
 5. 将子项嵌套在 children 数组中。
 6. 如果没有子项，children 必须为空数组 []。"""
 
@@ -68,14 +70,65 @@ class VlmClient:
                     "temperature": 0.1,
                     "allowed_openai_params": ['response_format'],
                     "response_format": self.response_format.model_dump(),
+                    "timeout": 600,
+                    "stream": True,
                 }
+                
+                if self.log_dir:
+                    import copy
+                    from pathlib import Path
+                    log_messages = copy.deepcopy(messages)
+                    for msg in log_messages:
+                        if isinstance(msg.get("content"), list):
+                            for item in msg["content"]:
+                                if item.get("type") == "image_url":
+                                    item["image_url"]["url"] = "<BASE64_IMAGE_DATA_OMITTED>"
+                                    
+                    req_log = {
+                        "model": self.model,
+                        "base_url": self.base_url,
+                        "temperature": kwargs.get("temperature"),
+                        "timeout": kwargs.get("timeout"),
+                        "stream": kwargs.get("stream"),
+                        "messages": log_messages
+                    }
+                    req_path = Path(self.log_dir) / f"vlm_request_attempt_{attempt + 1}.json"
+                    with open(req_path, "w", encoding="utf-8") as f:
+                        json.dump(req_log, f, ensure_ascii=False, indent=2)
 
                 logger.info(f"第 {attempt + 1} 次请求 VLM (模型: {self.model})...")
                 print(f"-> 正在打包 {len(images)} 张提取图像并发送至 VLM...")
-                print(f"-> 正在等待模型 {self.model} 解析响应，这可能需要几十秒的时间...")
-                response = await acompletion(**kwargs)
-                response_text = response.choices[0].message.content
-                print("-> 收到 VLM 响应，正在解析结构...")
+                
+                log_file = None
+                print(f"-> 正在请求模型 {self.model}，超时时间设置为 10 分钟。请耐心等待...")
+                
+                if self.log_dir:
+                    from pathlib import Path
+                    resp_path = Path(self.log_dir) / f"vlm_response_attempt_{attempt + 1}.txt"
+                    log_file = open(resp_path, "w", encoding="utf-8")
+                    print(f"-> 响应正流式输出到日志，可打开文件实时查看最新进展: {resp_path}")
+
+                response_stream = await acompletion(**kwargs)
+                response_text = ""
+                
+                try:
+                    char_count = 0
+                    async for chunk in response_stream:
+                        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                            content = chunk.choices[0].delta.content
+                            response_text += content
+                            char_count += len(content)
+                            print(f"\r-> 已接收响应数据: {char_count} 字符...", end="", flush=True)
+                            
+                            if log_file:
+                                log_file.write(content)
+                                log_file.flush()
+                    print()  # 换行，避免后续输出在同一行
+                finally:
+                    if log_file:
+                        log_file.close()
+
+                print("-> 收到 VLM 完整响应，正在解析结构...")
                 
                 bookmarks_data = self._extract_json(response_text)
                 return self._parse_bookmarks(bookmarks_data)

@@ -4,6 +4,10 @@ Typer CLI 应用程序主入口
 import typer
 import asyncio
 import os
+from datetime import datetime
+import json
+import base64
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -48,7 +52,26 @@ def process(
     if first is None:
         first = typer.prompt("请输入第一页页码", type=int)
 
+    start_time = time.time()
+
+    # 创建日志目录
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pdf_stem = Path(pdf_path).stem if pdf_path else "unknown"
+    log_dir = Path(os.getcwd()) / "logs" / f"{timestamp}_{pdf_stem}"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 记录用户输入参数
+    params = {
+        "pdf_path": pdf_path,
+        "toc_range": toc,
+        "first_page": first,
+        "output": output,
+    }
+    with open(log_dir / "user_input.json", "w", encoding="utf-8") as f:
+        json.dump(params, f, ensure_ascii=False, indent=2)
+
     typer.echo(f"正在准备处理 PDF: {pdf_path}")
+    typer.echo(f"日志将保存在: {log_dir}")
     
     if not Path(pdf_path).exists():
         typer.secho(f"错误: 找不到文件 {pdf_path}", fg=typer.colors.RED)
@@ -70,12 +93,24 @@ def process(
     try:
         images = extract_toc_images(pdf_path, toc_pages)
         typer.echo(f"成功提取了 {len(images)} 张图片。")
+        
+        # 保存提取出的图片记录
+        img_dir = log_dir / "images"
+        img_dir.mkdir(exist_ok=True)
+        for i, img in enumerate(images):
+            try:
+                img_data = base64.b64decode(img.data)
+                with open(img_dir / f"toc_page_{i}.jpg", "wb") as f:
+                    f.write(img_data)
+            except Exception as e:
+                typer.secho(f"警告: 写入日志图片 toc_page_{i}.jpg 失败: {e}", fg=typer.colors.YELLOW)
+                
     except Exception as e:
         typer.secho(f"提取图片失败: {e}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
         
     try:
-        client = VlmClient()
+        client = VlmClient(log_dir=str(log_dir))
     except Exception as e:
         typer.secho(f"初始化 VLM 客户端失败 (请检查 .env 是否配置): {e}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
@@ -91,7 +126,10 @@ def process(
     typer.echo("正在将书签应用到 PDF 文件中...")
     try:
         apply_bookmarks(pdf_path, bookmarks, first, out_path)
+        
+        elapsed_time = time.time() - start_time
         typer.secho(f"处理成功！结果已保存至: {out_path}", fg=typer.colors.GREEN)
+        typer.secho(f"总耗时: {elapsed_time:.2f} 秒", fg=typer.colors.CYAN)
     except Exception as e:
         typer.secho(f"写入书签到 PDF 时发生错误: {e}", fg=typer.colors.RED)
         raise typer.Exit(code=1)

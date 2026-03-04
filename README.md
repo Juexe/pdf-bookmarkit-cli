@@ -25,6 +25,10 @@ VLM_API_KEY="sk-xxxxxxxxxxx"
 VLM_BASE_URL="https://api.example.com/v1"
 VLM_MODEL="gpt-4o"
 ```
+已知火山支持的模型
+- doubao-seed-1-8-251228
+- doubao-seed-1-6-vision-250815
+- doubao-seed-1-6-flash-250828
 
 ### 3. 使用命令行
 使用 `uv run bookmarkit` 传入所需的 PDF 路径以及相关参数。如果未提供必要参数，CLI 将会自动提示你输入。
