@@ -1,4 +1,4 @@
-# PDF CLI Bookmarker
+# PDF Bookmarkit CLI
 
 `pdf-bookmarkit-cli` 是一个使用 Python, Typer 构建的命令行工具，用于直接从 PDF 提取目录页面，并通过调用大语言视觉模型 (VLM) 自动解析目录层级结构，最终将结构化树状书签注入回带有页码偏移补偿的 PDF 中。
 
