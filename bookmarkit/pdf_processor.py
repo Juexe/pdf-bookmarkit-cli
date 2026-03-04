@@ -49,18 +49,36 @@ def apply_bookmarks(pdf_path: str, bookmarks: List[BookmarkNode], first_page_off
     """
     doc = fitz.open(pdf_path)
     
-    toc_list = []
+    flat_nodes = []
     
-    def traverse(nodes: List[BookmarkNode], current_level: int):
+    def flatten(nodes: List[BookmarkNode]):
         for node in nodes:
-            # 计算最终页码，PyMuPDF 中 set_toc() 要求的也是 1-based 页码。
-            target_page = node.page_number + first_page_offset - 1
-            # PyMuPDF 要求的书签项格式为一个 list: [层级(1-based), 标题, 页码(1-based), ...]
-            toc_list.append([current_level, node.title, target_page])
+            flat_nodes.append(node)
             if node.children:
-                traverse(node.children, current_level + 1)
+                flatten(node.children)
                 
-    traverse(bookmarks, 1)
+    flatten(bookmarks)
+    
+    toc_list = []
+    current_pymupdf_level = 0
+    
+    for node in flat_nodes:
+        target_page = node.page_number + first_page_offset - 1
+        
+        # VLM 指定的 level，0是顶级
+        desired_level = node.level + 1
+        
+        # PyMuPDF 要求：下一项的 level 不能比上一项的 level 大超过 1
+        if desired_level > current_pymupdf_level + 1:
+            desired_level = current_pymupdf_level + 1
+            # 对于第一项，如果不从 1 开始，强制设为 1
+            if current_pymupdf_level == 0:
+                desired_level = 1
+                
+        # 允许 level 回退（如从 3 回到 1），这表示返回上级目录
+        # 同级目录 level 不变
+        toc_list.append([desired_level, node.title, target_page])
+        current_pymupdf_level = desired_level
     
     doc.set_toc(toc_list)
     doc.save(output_path)

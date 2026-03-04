@@ -30,7 +30,8 @@ class VlmClient:
         
         self.max_retries = max_retries
         self.log_dir = log_dir
-        logger.info(f"VlmClient 初始化成功，模型：{self.model}")
+        self.max_concurrency = int(os.getenv("VLM_MAX_CONCURRENCY", "1"))
+        logger.info(f"VlmClient 初始化成功，模型：{self.model}，最大并发：{self.max_concurrency}")
 
     def build_system_prompt(self) -> str:
         return """你正在分析 PDF 文档中的目录 (TOC) 页面。
@@ -45,17 +46,36 @@ class VlmClient:
 6. 如果没有子项，children 必须为空数组 []。"""
 
     async def recognize_toc(self, images: List[ProcessedImage]) -> List[BookmarkNode]:
+        total = len(images)
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        print(f"\n共 {total} 页目录，最大并发数: {self.max_concurrency}")
+
+        async def _task(i: int, img: ProcessedImage) -> List[BookmarkNode]:
+            async with semaphore:
+                print(f"\n>>> [页 {i + 1}/{total}] 开始识别...")
+                result = await self._recognize_single_image(img, i, total)
+                print(f"<<< [页 {i + 1}/{total}] 识别完成")
+                return result
+
+        tasks = [_task(i, img) for i, img in enumerate(images)]
+        results = await asyncio.gather(*tasks)
+
+        # 按页码顺序拼接结果
+        all_bookmarks = []
+        for bookmarks in results:
+            all_bookmarks.extend(bookmarks)
+        return all_bookmarks
+
+    async def _recognize_single_image(self, img: ProcessedImage, page_index: int, total: int = 1) -> List[BookmarkNode]:
         last_error = None
         for attempt in range(self.max_retries):
             try:
-                user_content = []
-                for img in images:
-                    user_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/{img.format.lower()};base64,{img.data}"
-                        }
-                    })
+                user_content = [{
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/{img.format.lower()};base64,{img.data}"
+                    }
+                }]
 
                 messages = [
                     {"role": "system", "content": self.build_system_prompt()},
@@ -92,21 +112,21 @@ class VlmClient:
                         "stream": kwargs.get("stream"),
                         "messages": log_messages
                     }
-                    req_path = Path(self.log_dir) / f"vlm_request_attempt_{attempt + 1}.json"
+                    req_path = Path(self.log_dir) / f"vlm_request_page_{page_index + 1}_attempt_{attempt + 1}.json"
                     with open(req_path, "w", encoding="utf-8") as f:
                         json.dump(req_log, f, ensure_ascii=False, indent=2)
 
-                logger.info(f"第 {attempt + 1} 次请求 VLM (模型: {self.model})...")
-                print(f"-> 正在打包 {len(images)} 张提取图像并发送至 VLM...")
+                tag = f"[页 {page_index + 1}/{total}]"
+                logger.info(f"{tag} 第 {attempt + 1} 次请求 VLM (模型: {self.model})...")
+                print(f"{tag} -> 正在发送图像至 VLM...")
                 
                 log_file = None
-                print(f"-> 正在请求模型 {self.model}，超时时间设置为 10 分钟。请耐心等待...")
                 
                 if self.log_dir:
                     from pathlib import Path
-                    resp_path = Path(self.log_dir) / f"vlm_response_attempt_{attempt + 1}.txt"
+                    resp_path = Path(self.log_dir) / f"vlm_response_page_{page_index + 1}_attempt_{attempt + 1}.txt"
                     log_file = open(resp_path, "w", encoding="utf-8")
-                    print(f"-> 响应正流式输出到日志，可打开文件实时查看最新进展: {resp_path}")
+                    # print(f"-> 响应正流式输出到日志，可打开文件实时查看最新进展: {resp_path}")
 
                 response_stream = await acompletion(**kwargs)
                 response_text = ""
@@ -118,7 +138,7 @@ class VlmClient:
                             content = chunk.choices[0].delta.content
                             response_text += content
                             char_count += len(content)
-                            print(f"\r-> 已接收响应数据: {char_count} 字符...", end="", flush=True)
+                            print(f"\r{tag} -> 已接收: {char_count} 字符...", end="", flush=True)
                             
                             if log_file:
                                 log_file.write(content)
@@ -128,7 +148,7 @@ class VlmClient:
                     if log_file:
                         log_file.close()
 
-                print("-> 收到 VLM 完整响应，正在解析结构...")
+                print(f"{tag} -> 收到完整响应，正在解析...")
                 
                 bookmarks_data = self._extract_json(response_text)
                 return self._parse_bookmarks(bookmarks_data)
@@ -139,7 +159,7 @@ class VlmClient:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
 
-        raise RuntimeError(f"所有 VLM 请求均失败: {last_error}")
+        raise RuntimeError(f"处理第 {page_index + 1} 页时所有 VLM 请求均失败: {last_error}")
 
     def _extract_json(self, response_text: str) -> List[Dict[str, Any]]:
         try:

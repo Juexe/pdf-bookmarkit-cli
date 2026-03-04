@@ -115,7 +115,8 @@ def process(
         typer.secho(f"初始化 VLM 客户端失败 (请检查 .env 是否配置): {e}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
         
-    typer.echo("正在通过 VLM 识别目录结构，请耐心等待...")
+    typer.echo(f"正在通过VLM({client.model})识别目录结构，请耐心等待...")
+    
     try:
         bookmarks = asyncio.run(client.recognize_toc(images))
         typer.echo(f"识别完成，共获取到 {len(bookmarks)} 个顶级节点。")
