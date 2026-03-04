@@ -40,7 +40,7 @@ MAX_RETRIES=1
 VLM_MAX_CONCURRENCY=4
 ```
 
-**已知可用的火山引擎（豆包）模型：**
+**注：依赖结构化输出能力**，已知可用的火山引擎（豆包）模型：
 - `volcengine/doubao-seed-1-8-251228`
 - `volcengine/doubao-seed-1-6-vision-250815`
 - `volcengine/doubao-seed-1-6-flash-250828`
