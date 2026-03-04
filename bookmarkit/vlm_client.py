@@ -17,7 +17,7 @@ class VlmClient:
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        max_retries: int = 3,
+        max_retries: Optional[int] = None,
         log_dir: Optional[str] = None
     ):
         self.model = model or os.getenv("VLM_MODEL")
@@ -28,7 +28,7 @@ class VlmClient:
         if not self.base_url or not self.model or not self.api_key:
             raise ValueError("VLM_BASE_URL, VLM_MODEL, VLM_API_KEY 必须提供或在环境变量中设置")
         
-        self.max_retries = max_retries
+        self.max_retries = max_retries or int(os.getenv("MAX_RETRIES", "3"))
         self.log_dir = log_dir
         self.max_concurrency = int(os.getenv("VLM_MAX_CONCURRENCY", "1"))
         logger.info(f"VlmClient 初始化成功，模型：{self.model}，最大并发：{self.max_concurrency}")
