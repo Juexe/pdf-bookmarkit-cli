@@ -31,15 +31,22 @@ def parse_page_range(range_str: str) -> list[int]:
 
 @app.command()
 def process(
-    pdf_path: str = typer.Argument(..., help="原 PDF 的路径"),
-    toc: str = typer.Option(..., "--toc", help="目录页码范围，如 '1-3' 或 '1,2,3' (1-based)"),
-    first: int = typer.Option(..., "--first", help="PDF 第一页(正文阿拉伯数字页码为1的那一页) 在整个 PDF 文件中的实际页码 (1-based)"),
+    pdf_path: str = typer.Argument(None, help="原 PDF 的路径"),
+    toc: str = typer.Option(None, "--toc", help="目录页码范围，如 '1-3' 或 '1,2,3' (1-based)"),
+    first: int = typer.Option(None, "--first", help="PDF 第一页(正文阿拉伯数字页码为1的那一页) 在整个 PDF 文件中的实际页码 (1-based)"),
     output: str = typer.Option(None, "--output", "-o", help="输出 PDF 路径（默认在原目录生成 _bookmarked 文件）")
 ):
     """
     处理 PDF，通过传入的目录页获取大模型生成的书签树，并应用到该 PDF 中。
     """
     load_dotenv()  # 确保加载了当前目录或系统目录中的 .env 文件
+
+    if pdf_path is None:
+        pdf_path = typer.prompt("请输入PDF路径")
+    if toc is None:
+        toc = typer.prompt("请输入目录页范围")
+    if first is None:
+        first = typer.prompt("请输入第一页页码", type=int)
 
     typer.echo(f"正在准备处理 PDF: {pdf_path}")
     
