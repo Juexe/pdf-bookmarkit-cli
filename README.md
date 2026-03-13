@@ -1,5 +1,137 @@
 # PDF Bookmarkit CLI
 
+[English](#Features) | [中文](#功能特性)
+
+`pdf-bookmarkit-cli` is a command-line tool built with Python and Typer. It extracts Table of Contents (TOC) pages directly from a PDF and uses a Vision Language Model (VLM) to automatically parse the hierarchical structure. The resulting tree-structured bookmarks are then injected back into the PDF with page offset compensation.
+
+## Features
+
+- **Pure Local CLI Operation**: No external backend or service dependencies.
+- **High-Quality Extraction**: Uses `PyMuPDF` for high-resolution TOC image extraction and low-level PDF bookmark injection.
+- **LLM Integration**: Supports `LiteLLM` to connect with any OpenAI-compatible Vision Language Model (e.g., Qwen, GPT-4o, Doubao, etc.) for `Structured Outputs`.
+- **Sliding Window Recognition**: Sends two adjacent pages to the VLM simultaneously to improve recognition accuracy for TOC items spanning across pages.
+- **Auto-Merge & Deduplication**: Merges results from multiple windows, sorts them by page number, removes duplicates, and reconstructs a complete nested bookmark tree.
+- **Detailed Logging**: Every run automatically creates a timestamped subdirectory under `logs/`, saving request parameters, raw responses, and thumbnails.
+- **Offline Reprocessing (`--from-logs`)**: Directly reuse VLM responses from existing log directories without re-invoking the VLM—perfect for debugging and adjustments.
+
+---
+
+## Quick Start
+
+### 1. Prepare Environment
+
+Ensure you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, then run in the project directory:
+
+```bash
+uv sync
+```
+
+### 2. Configure VLM Keys
+
+Create a `.env` file in the project root (refer to `.env.example`):
+
+```env
+VLM_API_KEY="sk-xxxxxxxxxxx"
+VLM_BASE_URL="https://api.example.com/v1"
+VLM_MODEL="gpt-4o"
+
+# Number of failure retries (Default: 1)
+MAX_RETRIES=1
+
+# Max concurrency (Default: 1 for serial, recommended for model rate limits)
+VLM_MAX_CONCURRENCY=4
+```
+
+**Note: Requires Structured Outputs capability.** Known compatible models (e.g., Volcengine Doubao):
+- `volcengine/doubao-seed-1-8-251228`
+- `volcengine/doubao-seed-1-6-vision-250815`
+- `volcengine/doubao-seed-1-6-flash-250828`
+
+### 3. Usage
+
+```bash
+uv run bookmarkit [PDF_PATH] [--toc <TOC_PAGE_RANGE>] [--first <FIRST_CONTENT_PAGE_NUMBER>]
+```
+
+If necessary parameters are missing, the CLI will interactively prompt for input.
+
+**Example**: Extract pages 1-3 of `math_book.pdf` as TOC, where page 1 of the content corresponds to the 5th physical page of the PDF:
+
+```bash
+uv run bookmarkit math_book.pdf --toc "1-3" --first 5
+```
+
+Upon success, `math_book_bookmarked.pdf` will be generated in the same directory.
+
+---
+
+## Parameter Descriptions
+
+| Parameter | Type | Description |
+|---|---|---|
+| `pdf_path` | Positional | Path to the PDF file. Optional (prompted if omitted). |
+| `--toc` | Option | Physical page range of the TOC (1-based), e.g., `"1-3"` or `"1,2,3"`. |
+| `--first` | Option | Absolute physical page number (1-based) of the first content page (Page 1) to calibrate bookmark offsets. |
+| `--output` / `-o` | Option | Output path. Defaults to a `_bookmarked` copy in the same directory. |
+| `--from-logs` | Option | Specify an existing log directory to skip VLM calls and reuse response data. |
+
+---
+
+## --from-logs: Offline Reprocessing
+
+After each run, a timestamped directory is created under `logs/`:
+
+```
+logs/
+└── 20260304_213421_math_book/
+    ├── user_input.json                        # Original parameters
+    ├── images/                                # Extracted TOC thumbnails
+    ├── vlm_request_win_1_page_1+2_attempt_1.json
+    ├── vlm_response_win_1_page_1+2_attempt_1.txt
+    ├── vlm_request_win_2_page_2+3_attempt_1.json
+    ├── vlm_response_win_2_page_2+3_attempt_1.txt
+    └── ...
+```
+
+Use `--from-logs` to skip VLM calls and reuse these response files:
+
+```bash
+uv run bookmarkit --from-logs logs/20260304_213421_math_book
+```
+
+Parameters like `pdf_path` and `--first` will be read from `user_input.json` but can be manually overridden:
+
+```bash
+# Override output path
+uv run bookmarkit --from-logs logs/20260304_213421_math_book -o my_output.pdf
+
+# Override first_page (e.g., if it was wrong last time)
+uv run bookmarkit --from-logs logs/20260304_213421_math_book --first 10
+```
+
+---
+
+## Recognition Logic
+
+```
+PDF File
+  ↓ TOC image extraction via PyMuPDF
+Image List [p1, p2, p3, p4, p5]
+  ↓ Sliding Window Grouping
+Window 1: [p1, p2] → VLM Recognition → Bookmark List A
+Window 2: [p2, p3] → VLM Recognition → Bookmark List B
+Window 3: [p3, p4] → VLM Recognition → Bookmark List C
+Window 4: [p4, p5] → VLM Recognition → Bookmark List D
+  ↓ Flatten + Deduplicate (Title+Page#) + Sort + Reconstruct Tree
+Complete Bookmark Tree
+  ↓ Injection via PyMuPDF + Page Offset Calibration
+Output PDF (with bookmarks)
+```
+
+---
+
+# PDF Bookmarkit CLI
+
 `pdf-bookmarkit-cli` 是一个使用 Python、Typer 构建的命令行工具，用于直接从 PDF 提取目录页面，并通过调用大语言视觉模型（VLM）自动解析目录层级结构，最终将结构化树状书签注入回带有页码偏移补偿的 PDF 中。
 
 ## 功能特性
@@ -40,7 +172,7 @@ MAX_RETRIES=1
 VLM_MAX_CONCURRENCY=4
 ```
 
-**注：依赖结构化输出能力**，已知可用的火山引擎（豆包）模型：
+**注：依赖结构化输出能力**，已知可用的[火山引擎（豆包）模型](https://www.volcengine.com/docs/82379/1330310?lang=zh#25b394c2)：
 - `volcengine/doubao-seed-1-8-251228`
 - `volcengine/doubao-seed-1-6-vision-250815`
 - `volcengine/doubao-seed-1-6-flash-250828`
